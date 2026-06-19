@@ -282,55 +282,63 @@ score_contribution_expr = (
      .otherwise(F.lit(2))
 )
 
-event_mart = (
+evidence_renamed = evidence.select(
+    F.col("api_run_id").alias("_ev_api_run_id"),
+    F.col("payload_hash").alias("_ev_payload_hash"),
+    F.col("evidence_document_id").alias("_ev_evidence_document_id"),
+)
+
+events_joined = (
     events
     .join(best_matches, on="external_event_id", how="left")
     .join(sku_counts, on="supplier_id", how="left")
+)
+
+event_mart = (
+    events_joined
     .join(
-        evidence.select(
-            F.col("api_run_id"),
-            F.col("payload_hash"),
-            F.col("evidence_doc_id"),
-            F.col("raw_payload_size_bytes")
-        ),
-        on=["api_run_id", "payload_hash"],
+        evidence_renamed,
+        on=[
+            events_joined["api_run_id"] == evidence_renamed["_ev_api_run_id"],
+            events_joined["source_payload_hash"] == evidence_renamed["_ev_payload_hash"]
+        ],
         how="left"
     )
     .withColumn(
         "score_contribution",
-        F.when(F.col("supplier_id").isNotNull(), score_contribution_expr)
+        F.when(events_joined["supplier_id"].isNotNull(), score_contribution_expr)
          .otherwise(F.lit(None).cast("int"))
     )
     .withColumn(
         "match_type",
-        F.coalesce(F.col("match_type"), F.lit("none"))
+        F.coalesce(events_joined["match_type"], F.lit("none"))
     )
     .withColumn(
         "matched_sku_count",
-        F.coalesce(F.col("matched_sku_count"), F.lit(0))
+        F.coalesce(events_joined["matched_sku_count"], F.lit(0))
     )
     .select(
-        F.col("external_event_id"),
-        F.col("source_name"),
-        F.col("risk_category"),
-        F.col("event_type"),
-        F.col("event_title"),
-        F.col("event_summary"),
-        F.col("severity"),
-        F.col("event_date"),
-        F.col("event_timestamp"),
-        F.col("source_url"),
-        F.col("event_country"),
-        F.col("event_region"),
-        F.col("language"),
-        F.col("supplier_id").alias("matched_supplier_id"),
-        F.col("match_type"),
-        F.col("match_value"),
-        F.col("match_confidence"),
-        F.col("matched_sku_count"),
+        events_joined["external_event_id"],
+        events_joined["source_name"],
+        events_joined["risk_category"],
+        events_joined["event_type"],
+        events_joined["event_title"],
+        events_joined["event_summary"],
+        events_joined["severity"],
+        events_joined["event_date"],
+        events_joined["event_timestamp"],
+        events_joined["source_url"],
+        events_joined["event_country"],
+        events_joined["event_region"],
+        events_joined["language"],
+        events_joined["supplier_id"].alias("matched_supplier_id"),
+        events_joined["match_type"],
+        events_joined["match_value"],
+        events_joined["match_confidence"],
+        events_joined["matched_sku_count"],
         F.col("score_contribution"),
-        F.col("evidence_doc_id"),
-        F.col("api_run_id"),
+        evidence_renamed["_ev_evidence_document_id"].alias("evidence_doc_id"),
+        events_joined["api_run_id"],
         F.lit(datetime.utcnow().isoformat()).alias("gold_created_at"),
         F.lit("21_gold_external_risk_event_mart").alias("gold_source_notebook")
     )

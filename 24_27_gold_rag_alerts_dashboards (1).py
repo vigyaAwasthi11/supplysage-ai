@@ -434,7 +434,13 @@ supplier_dash = (
         "score_delta_24h", "score_delta_7d", "top_risk_driver",
         "recommended_action", "operational_score", "dependency_score",
         "external_event_score", "logistics_score", "sanctions_score", "cyber_score",
-        "deterioration_flag", "score_date"
+        # gold_dim_suppliers already has a deterioration_flag (from the Silver
+        # domain view's latest_is_deteriorating). This one comes from the
+        # risk-scoring engine in Notebook 22 and reflects the same underlying
+        # signal but computed at a different point in the pipeline — rename
+        # to avoid COLUMN_ALREADY_EXISTS rather than silently dropping it.
+        F.col("deterioration_flag").alias("risk_score_deterioration_flag"),
+        "score_date"
     ), on="supplier_id", how="left")
     .join(active_events_count, on="supplier_id", how="left")
     .join(sku_exposure, on="supplier_id", how="left")

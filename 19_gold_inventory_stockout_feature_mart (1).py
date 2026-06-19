@@ -44,20 +44,41 @@ print(f"gold_dim_products_skus: {dim_skus.count()} rows")
 
 # COMMAND ----------
 
-# Pull 30-day trailing demand aggregated to canonical_sku_id
-# silver_domain_retail_sales_price_daily uses canonical_sku_id via product crosswalk join
-sales_agg = spark.sql("""
-    SELECT
-        canonical_sku_id,
-        AVG(units_sold) AS avg_daily_units_sold,
-        AVG(sell_price) AS avg_sell_price,
-        SUM(units_sold * sell_price) AS total_revenue_30d,
-        COUNT(DISTINCT calendar_date) AS days_with_sales,
-        SUM(units_sold) AS total_units_30d
+# silver_domain_retail_sales_price_daily has item_id, not canonical_sku_id.
+# Resolve canonical_sku_id by joining through the crosswalk on the M5 item_id.
+crosswalk_m5 = spark.table("supplysage_silver.silver_product_crosswalk").filter(
+    F.col("source_system") == "m5"
+).select(
+    F.col("source_product_id").alias("item_id"),
+    F.col("canonical_sku_id")
+).dropDuplicates(["item_id"])
+
+# IMPORTANT: the M5 dataset's calendar runs through ~2016, not the present day.
+# Using current_date() here would return zero rows since no sales data exists
+# within 30 days of "today". Instead, find the latest calendar_date actually
+# present in the sales data and use THAT as the reference point for "last 30 days".
+max_date_row = spark.sql("""
+    SELECT MAX(calendar_date) AS max_date
     FROM supplysage_silver.silver_domain_retail_sales_price_daily
-    WHERE calendar_date >= date_sub(current_date(), 30)
-    GROUP BY canonical_sku_id
-""")
+""").collect()[0]
+reference_date = max_date_row["max_date"]
+print(f"Using reference_date = {reference_date} (latest date in sales data) instead of current_date()")
+
+sales_raw = spark.table("supplysage_silver.silver_domain_retail_sales_price_daily")
+
+sales_agg = (
+    sales_raw
+    .filter(F.col("calendar_date") >= F.date_sub(F.lit(reference_date), 30))
+    .join(crosswalk_m5, on="item_id", how="inner")
+    .groupBy("canonical_sku_id")
+    .agg(
+        F.avg("units_sold").alias("avg_daily_units_sold"),
+        F.avg("sell_price").alias("avg_sell_price"),
+        F.sum(F.col("units_sold") * F.col("sell_price")).alias("total_revenue_30d"),
+        F.countDistinct("calendar_date").alias("days_with_sales"),
+        F.sum("units_sold").alias("total_units_30d")
+    )
+)
 
 print(f"Sales 30-day aggregation: {sales_agg.count()} SKUs")
 
@@ -69,7 +90,7 @@ print(f"Sales 30-day aggregation: {sales_agg.count()} SKUs")
 
 # COMMAND ----------
 
-latest_window = Window.partitionBy("canonical_sku_id").orderBy(F.col("snapshot_date").desc())
+latest_window = Window.partitionBy("canonical_sku_id").orderBy(F.col("inventory_date").desc())
 
 inv_latest = (
     inv_snapshot
@@ -77,7 +98,7 @@ inv_latest = (
     .filter(F.col("rn") == 1)
     .select(
         "canonical_sku_id",
-        "snapshot_date",
+        F.col("inventory_date").alias("snapshot_date"),
         "inventory_level",
         "units_sold",
         "units_ordered",
@@ -102,20 +123,26 @@ print(f"Latest inventory snapshot per SKU: {inv_latest.count()} rows")
 
 # COMMAND ----------
 
+# IMPORTANT: silver_m5_calendar covers the M5 dataset's historical date range
+# (through ~2016), not the present day. Use the calendar's own max date as the
+# reference point for "next 14 days" rather than current_date().
+calendar_max_date = calendar.agg(F.max("calendar_date").alias("max_date")).collect()[0]["max_date"]
+print(f"Using calendar reference date = {calendar_max_date} instead of current_date()")
+
 snap_upcoming = calendar.filter(
-    (F.col("calendar_date") >= F.current_date()) &
-    (F.col("calendar_date") <= F.date_add(F.current_date(), 14)) &
+    (F.col("calendar_date") >= F.lit(calendar_max_date)) &
+    (F.col("calendar_date") <= F.date_add(F.lit(calendar_max_date), 14)) &
     (F.col("is_snap_any_state") == True)
 ).agg(F.count("*").alias("snap_days_next_14d")).collect()[0]["snap_days_next_14d"]
 
 is_event_upcoming = calendar.filter(
-    (F.col("calendar_date") >= F.current_date()) &
-    (F.col("calendar_date") <= F.date_add(F.current_date(), 14)) &
+    (F.col("calendar_date") >= F.lit(calendar_max_date)) &
+    (F.col("calendar_date") <= F.date_add(F.lit(calendar_max_date), 14)) &
     (F.col("is_event_day") == True)
 ).agg(F.count("*").alias("event_days_next_14d")).collect()[0]["event_days_next_14d"]
 
-print(f"SNAP days in next 14 days: {snap_upcoming}")
-print(f"Event days in next 14 days: {is_event_upcoming}")
+print(f"SNAP days in next 14 days (from data's latest date): {snap_upcoming}")
+print(f"Event days in next 14 days (from data's latest date): {is_event_upcoming}")
 
 # COMMAND ----------
 

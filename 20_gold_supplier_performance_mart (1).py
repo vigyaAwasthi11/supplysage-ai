@@ -41,21 +41,17 @@ print(f"silver_domain_supplier_network:   {network.count()} rows")
 
 po_monthly = (
     pos
-    .withColumn("po_month", F.date_format(F.col("order_date"), "yyyy-MM"))
+    .withColumn("po_month", F.trunc(F.col("order_date"), "month"))
     .groupBy("supplier_id", "po_month")
     .agg(
         F.count("po_id").alias("po_count"),
         F.count("po_line_id").alias("po_line_count"),
-        F.sum(F.when(F.col("status").isin("delayed"), 1).otherwise(0)).alias("late_po_line_count"),
-        F.avg(
-            F.when(
-                F.col("quantity_ordered") > 0,
-                F.col("quantity_received") / F.col("quantity_ordered")
-            )
-        ).alias("avg_po_fill_rate"),
-        F.avg(
-            F.when(F.col("actual_delay_days").isNotNull(), F.col("actual_delay_days"))
-        ).alias("avg_delivery_delay_days")
+        # silver_purchase_orders already computes is_po_late — use it directly
+        F.sum(F.when(F.col("is_po_late") == True, 1).otherwise(0)).alias("late_po_line_count"),
+        # po_fill_rate is already precomputed in Silver — just average it
+        F.avg("po_fill_rate").alias("avg_po_fill_rate"),
+        # delivery_delay_days is already precomputed in Silver
+        F.avg("delivery_delay_days").alias("avg_delivery_delay_days")
     )
 )
 
@@ -115,7 +111,7 @@ performance_mart = (
     .join(
         po_monthly,
         on=[scorecards_with_trend.supplier_id == po_monthly.supplier_id,
-            scorecards_with_trend.scorecard_month == po_monthly.po_month],
+            F.trunc(scorecards_with_trend.scorecard_month, "month") == po_monthly.po_month],
         how="left"
     )
     .join(route_counts, on="supplier_id", how="left")

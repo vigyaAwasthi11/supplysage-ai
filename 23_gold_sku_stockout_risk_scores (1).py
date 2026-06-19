@@ -101,10 +101,11 @@ primary_supplier_risk = primary_supplier_risk.withColumn(
 sku_risk_base = (
     inv_features
     .join(primary_supplier_risk, on="canonical_sku_id", how="left")
-    .join(
-        dim_skus.select("canonical_sku_id", "category", "department"),
-        on="canonical_sku_id", how="left"
-    )
+    # NOTE: inv_features (gold_inventory_stockout_feature_mart) already carries
+    # category, department, and m5_item_id from Notebook 19's own join to
+    # gold_dim_products_skus. Joining dim_skus again here would just
+    # re-introduce the same columns and cause AMBIGUOUS_REFERENCE errors.
+    # No second join to dim_skus is needed.
 )
 
 # COMMAND ----------
