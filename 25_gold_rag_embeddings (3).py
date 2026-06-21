@@ -821,17 +821,12 @@ def format_evidence_for_llm(retrieved_chunks: List[Dict[str, Any]]) -> str:
     return "\\n".join(lines)
 '''
 
-# Write retrieval function to DBFS for import by the agent notebook
-dbutils.fs.put(
-    "/FileStore/supplysage/supplysage_rag_retriever.py",
-    retrieval_code,
-    overwrite=True
-)
-print("✅ Retrieval function written to /FileStore/supplysage/supplysage_rag_retriever.py")
-print("   Import in agent notebook with:")
-print("   import sys")
-print("   sys.path.insert(0, '/dbfs/FileStore/supplysage')")
-print("   from supplysage_rag_retriever import retrieve_evidence, format_evidence_for_llm")
+
+print("✅ Skipped /FileStore helper-module export.")
+print("Notebook 27 contains the retrieval logic directly and reads:")
+print("- supplysage_gold.gold_chat_context_snapshots")
+print("- supplysage_gold.gold_rag_embeddings")
+print("- supplysage_gold.gold_rag_retrieval_index")
 
 # COMMAND ----------
 
